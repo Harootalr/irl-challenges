@@ -1,0 +1,94 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Tool caches
+.vite/
+.cache
+.parcel-cache
+.npm
+.eslintcache
+
+# Logs
+logs/
+*.log
+pids/
+*.pid
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+
+# OS/IDE
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+.vscode/
+.idea/
+.vscode-test
+*.swp
+*.swo
+*~
+.tern-port
+
+# Package artifacts
+*.tgz
+*.tar.gz
+.yarn-integrity
+jspm_packages/
+
+# Framework outputs (only if used)
+.next/
+.nuxt/
+.vuepress/dist
+.serverless/
+.fusebox/
+.dynamodb/
+
+# Temp
+tmp/
+temp/
+
+# Databases (local dev)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Test runners (optional, if you add them)
+playwright-report/
+test-results/
+.playwright/
+cypress/videos/
+cypress/screenshots/
+
+# Drizzle migrations SHOULD be committed — do NOT ignore the folder
+# drizzle/
+
+# Replit project files SHOULD be committed — do NOT ignore these
+# .replit
+# replit.nix
+
+# Public assets
+# Keep client/public committed (PWA manifest, icons, sw.js). Do not ignore it.
+# If server/public is build-generated only, you may ignore it. Otherwise, keep it tracked.
+# server/public
