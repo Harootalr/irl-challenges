@@ -1,153 +1,118 @@
-# IRL Challenges
-
-A location-based gaming platform that connects players for in-person challenges at real venues across Sweden. Features GPS-verified check-ins, real-time messaging, results tracking, and a comprehensive rating system.
-
-## Features
-
-### Core Functionality
-- **Location-Based Gaming**: Discover and participate in gaming challenges at verified venues
-- **GPS Check-In**: Secure location verification within 100-meter radius of venues
-- **Real-Time Chat**: Live messaging system for challenge participants
-- **Results Tracking**: Mutual confirmation system for game outcomes
-- **Rating & Reviews**: Comprehensive player and venue rating system
-
-### User Experience
-- **Mobile-First Design**: Optimized for mobile devices with responsive layout
-- **Glass-Morphism UI**: Modern purple/violet theme with sophisticated visual effects
-- **Dark/Light Mode**: Automatic theme switching support
-- **Progressive Web App**: Fast, app-like experience in the browser
-
-### Admin Features
-- **Venue Management**: Admin dashboard for venue approval and management
-- **User Moderation**: Comprehensive user management and reporting system
-- **Analytics**: Real-time analytics and export capabilities
-- **Challenge Oversight**: Monitor and manage ongoing challenges
-
-## Tech Stack
-
-### Frontend
-- **React 18** with TypeScript
-- **Tailwind CSS** for styling with custom design system
-- **Shadcn/UI** components built on Radix UI primitives
-- **TanStack Query** for server state management
-- **Framer Motion** for animations (optimized for performance)
-- **Vite** for fast development and building
-
-### Backend
-- **Node.js** with Express.js
-- **TypeScript** for type safety
-- **PostgreSQL** database with Neon serverless
-- **Drizzle ORM** for database operations
-- **WebSocket** integration for real-time features
-- **bcrypt** for password hashing
-- **Session-based authentication**
-
-### Infrastructure
-- **Replit** development environment
-- **Git** version control with GitHub integration
-- **Environment-based configuration**
-- **Request logging and monitoring**
-
-## Getting Started
-
-### Prerequisites
-- Node.js 18+ 
-- PostgreSQL database
-- Replit account (recommended)
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/Harootalr/irl-challenges.git
-cd irl-challenges
-```
-
-2. Install dependencies:
-```bash
+Update File: README.md
+IRL Challenges
+Location-based gaming platform to create, join, and complete real-world challenges at verified venues. Mobile-first PWA. Real-time chat. Mutual result confirmation. Admin dashboard.
+Quick start
+# 1) Install
 npm install
-```
 
-3. Set up environment variables:
-```bash
-# Database
-DATABASE_URL=your_postgresql_connection_string
+# 2) Configure env
+cp .env.example .env   # then edit values
 
-# Session Secret
-JWT_SECRET=your_jwt_secret_key
-
-# Optional: Google Maps API for enhanced location features
-VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-```
-
-4. Run database migrations:
-```bash
+# 3) Migrate DB (Drizzle -> Postgres/Supabase)
+npm run db:generate
 npm run db:push
-```
 
-5. Start the development server:
-```bash
-npm run dev
-```
+# 4) Dev
+npm run dev            # runs server and client in watch mode
 
-The application will be available at `http://localhost:5000`
+# 5) Build and start
+npm run build
+npm start
+Tech stack
+Client: React + TypeScript, Vite, Tailwind, shadcn/ui, Wouter, React Query
+Server: Node.js, Express, WebSockets, pino
+Data: Drizzle ORM, PostgreSQL (Supabase)
+PWA: Service worker, manifest, install prompt
+Testing: Playwright or Cypress
+Environment variables
+Create .env from .env.example.
+Required
+DATABASE_URL Postgres connection string
+NODE_ENV development or production
+PORT server port, default 3000
+SESSION_SECRET or JWT_SECRET secret for auth
+Scripts
+{
+  "dev": "tsx watch server/index.ts",
+  "build": "tsc -p . && vite build",
+  "start": "node dist/server/index.js",
+  "db:generate": "drizzle-kit generate",
+  "db:push": "drizzle-kit push",
+  "test": "playwright test"
+}
+Project structure
+client/                # React app
+  src/                 # UI, pages, hooks, components
+  index.html
+  public/              # manifest.webmanifest, icons, sw.js
 
-## Project Structure
+server/
+  index.ts             # Express bootstrap
+  routes.ts            # HTTP routes
+  storage.ts           # Data access via Drizzle
+  db.ts                # Drizzle + PG setup
+  ws.ts                # WebSocket handlers
 
-```
-├── client/                 # React frontend
-│   ├── src/
-│   │   ├── components/     # Reusable UI components
-│   │   ├── pages/          # Page components
-│   │   ├── hooks/          # Custom React hooks
-│   │   ├── lib/            # Utilities and configurations
-│   │   └── index.css       # Global styles and theme
-├── server/                 # Express backend
-│   ├── routes/             # API route handlers
-│   ├── middleware/         # Express middleware
-│   ├── storage.ts          # Database operations
-│   └── websocket.ts        # WebSocket server
-├── shared/                 # Shared TypeScript definitions
-│   └── schema.ts           # Database schema and types
-└── package.json
-```
+shared/
+  schema.ts            # Drizzle models and Zod schemas
 
-## Key Features Explained
-
-### Authentication System
-- Secure session-based authentication
-- Password hashing with bcrypt
-- Role-based access control (user, venue_admin, super_admin)
-
-### Location Services
-- Browser Geolocation API integration
-- GPS verification for venue check-ins
-- Proximity-based venue discovery
-
-### Real-Time Communication
-- WebSocket server for live messaging
-- Challenge-specific chat rooms
-- Automatic reconnection handling
-
-### Database Design
-- PostgreSQL with Drizzle ORM
-- Comprehensive schema covering users, venues, challenges, messages, results
-- Optimized queries for location-based searches
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contact
-
-Project created by Harootalr
-
-Repository: https://github.com/Harootalr/irl-challenges
+drizzle/               # Migrations (commit this)
+Core features
+Challenge lifecycle: open -> full -> in_progress -> completed or disputed or cancelled
+Result reporting: host and opponent each submit, finalize on match, dispute on conflict
+GPS check-in: 100 m radius validation
+Real-time chat per challenge
+Roles: user, venue_admin, super_admin
+Admin dashboard: users, venues, analytics, exports
+API overview
+GET /health liveness probe
+POST /api/report-result body: { challenge_id, user_id, reported_outcome }
+Outcomes: host_won, opponent_won, draw, cancelled
+Auth required; user may report only for self unless super_admin
+POST /api/check-in GPS venue check-in
+GET /api/challenges, GET /api/challenges/:id, POST /api/challenges
+GET /api/venues and nearby queries
+POST /api/referrals/claim referral code claim
+GET /og/ch/:id.png dynamic Open Graph image
+Result reporting flow
+Player A posts outcome.
+Status becomes in_progress if only one report exists.
+Player B posts outcome.
+If outcomes match -> completed with finalOutcome.
+If outcomes differ -> disputed for admin review.
+Idempotent and transaction safe.
+PWA
+client/public/manifest.webmanifest
+client/public/sw.js
+Network-first for /api/*
+Stale-while-revalidate for static
+Installable on mobile. Offline shell supported.
+Security
+Helmet, CORS allowlist, rate limiting
+Session or token auth with HttpOnly cookies when applicable
+Least-privilege DB role in production
+Input validation with Zod across writes
+pino logs with request id and latency
+Migrations
+Edit shared/schema.ts
+npm run db:generate to create SQL
+npm run db:push to apply
+Commit drizzle/ migrations
+Testing
+E2E: open home, join challenge, report result, verify status
+Accessibility: modal focus trap, keyboard navigation
+Unit: API client schemas and error paths
+Deployment
+Replit Deploy
+Run command: npm run build && npm start
+Health endpoint: /health
+Secrets: DATABASE_URL, NODE_ENV=production, PORT=3000, SESSION_SECRET
+Static served from client/public with caching
+Logs in Replit console
+Monitoring
+Uptime ping /health
+Optional Sentry for errors, PostHog for analytics
+Track activation, join, report, retention
+License
+See LICENSE. Use requires written approval if you adopt the permission-required license.
+*** End Patch
