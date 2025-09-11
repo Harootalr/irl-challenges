@@ -1,4 +1,4 @@
-RL Challenges
+IRL Challenges
 
 A location-based gaming platform that connects players for in-person challenges at real venues across Sweden. Features GPS-verified check-ins, real-time messaging, results tracking, and a comprehensive rating system.
 
