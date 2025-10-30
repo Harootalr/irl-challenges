@@ -1,0 +1,8 @@
+{
+  "packageSchemaVersion": "1.0",
+  "flowAssets": {
+    "assetPaths": [
+      "GDPR_DPA_Compliance_Flow.json"
+    ]
+  }
+}

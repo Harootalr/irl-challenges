@@ -12,16 +12,19 @@ A complete, production-ready Power Automate flow for automated GDPR compliance a
 
 ## Import in 5 Minutes
 
-### 1. Download the Flow
-- Location: `power-automate-flows/GDPR_DPA_Compliance_Flow.json`
-- This is the complete workflow definition ready to import
+### 1. Download the Package File
+- **USE THIS FILE**: `GDPR_DPA_Compliance_Flow_Package.zip` (3.8 KB)
+- This is the complete package Power Automate needs
+- ⚠️ **Do NOT extract it** - upload the .zip file as-is
 
 ### 2. Import to Power Automate
 1. Go to https://make.powerautomate.com
 2. Click **My flows** → **Import** → **Import Package (Legacy)**
-3. Upload `GDPR_DPA_Compliance_Flow.json`
+3. Upload `GDPR_DPA_Compliance_Flow_Package.zip` ← **Use the .zip file!**
 4. Map your connections (SharePoint, Teams, AI Builder)
 5. Click **Import**
+
+💡 **Having trouble?** See `IMPORT_GUIDE.md` for detailed instructions and troubleshooting
 
 ### 3. Configure Your OpenAI API Key
 ⚠️ **REQUIRED**: Replace the placeholder API key

@@ -1,0 +1,19 @@
+{
+  "packageSchemaVersion": "1.0.0.0",
+  "packageManifest": {
+    "schemaVersion": "1.0.0.0",
+    "packageDisplayName": "GDPR DPA Compliance Flow",
+    "packageDescription": "Automated GDPR compliance analysis for Data Processing Agreements with AI Builder OCR and OpenAI GPT-4 integration.",
+    "packageCreatedBy": "Integritetssmart - Setterwalls Law Firm",
+    "packageCreatedDateTime": "2025-10-30T00:00:00Z",
+    "packageSourceEnvironment": "Default",
+    "packageTelemetryId": "gdpr-dpa-compliance-flow-011CUdmmYupfm18VbimmEQ1g",
+    "packageContents": [
+      {
+        "type": "Workflow",
+        "name": "GDPR_DPA_Compliance_Analysis",
+        "id": "gdpr-dpa-compliance-flow-v1"
+      }
+    ]
+  }
+}
