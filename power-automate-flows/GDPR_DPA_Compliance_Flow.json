@@ -1,0 +1,350 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "defaultValue": {},
+      "type": "Object"
+    }
+  },
+  "triggers": {
+    "When_a_file_is_created_(properties_only)": {
+      "recurrence": {
+        "frequency": "Minute",
+        "interval": 1
+      },
+      "splitOn": "@triggerOutputs()?['body/value']",
+      "type": "ApiConnection",
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+          }
+        },
+        "method": "get",
+        "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/tables/@{encodeURIComponent(encodeURIComponent('9ef8d89e-44a9-4997-b58e-97fac2be77b6'))}/onnewitems",
+        "queries": {
+          "folderPath": "/Shared Documents/New DPA Test/DPA General/Review Queue"
+        }
+      }
+    }
+  },
+  "actions": {
+    "Condition_-_Check_if_PDF": {
+      "type": "If",
+      "expression": {
+        "and": [
+          {
+            "endsWith": [
+              "@triggerOutputs()?['body/{FilenameWithExtension}']",
+              ".pdf"
+            ]
+          }
+        ]
+      },
+      "actions": {
+        "Get_file_content": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "get",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/files/@{encodeURIComponent(triggerOutputs()?['body/{Identifier}'])}/content"
+          },
+          "runAfter": {}
+        },
+        "Recognize_text_in_PDF": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['commondataserviceforapps']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v2/predict",
+            "body": {
+              "base64Encoded": "@{base64(outputs('Get_file_content')?['body'])}",
+              "mimeType": "application/pdf",
+              "modelId": "prebuilt-read"
+            }
+          },
+          "runAfter": {
+            "Get_file_content": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Initialize_AllAnalyses": {
+          "type": "InitializeVariable",
+          "inputs": {
+            "variables": [
+              {
+                "name": "AllAnalyses",
+                "type": "array",
+                "value": []
+              }
+            ]
+          },
+          "runAfter": {
+            "Recognize_text_in_PDF": [
+              "Succeeded"
+            ]
+          }
+        },
+        "For_each_result": {
+          "type": "Foreach",
+          "foreach": "@outputs('Recognize_text_in_PDF')?['results']",
+          "actions": {
+            "For_each_line": {
+              "type": "Foreach",
+              "foreach": "@items('For_each_result')?['lines']",
+              "actions": {
+                "HTTP_-_Call_OpenAI": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "https://api.openai.com/v1/chat/completions",
+                    "headers": {
+                      "Content-Type": "application/json",
+                      "Authorization": "Bearer YOUR_OPENAI_API_KEY_HERE"
+                    },
+                    "body": {
+                      "model": "gpt-4o",
+                      "messages": [
+                        {
+                          "role": "user",
+                          "content": "You are a GDPR compliance expert reviewing Data Processing Agreements (DPAs) for Setterwalls law firm.\n\nAnalyze the following DPA and provide a comprehensive compliance assessment:\n\n**DPA TEXT:**\n@{items('For_each_line')?['text']}\n\n**ANALYSIS REQUIREMENTS:**\n\n1. **COMPLIANCE SCORE** (0-100)\n2. **CRITICAL ISSUES** (with GDPR Article references)\n3. **MEDIUM RISK ISSUES**\n4. **POSITIVE ASPECTS**\n5. **MISSING CLAUSES**\n6. **RECOMMENDATIONS** (priority order)\n7. **VENDOR RISK LEVEL** (HIGH/MEDIUM/LOW)\n\nFormat as clear sections with headers."
+                        }
+                      ],
+                      "max_tokens": 2000,
+                      "temperature": 0.3
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Parse_JSON": {
+                  "type": "ParseJson",
+                  "inputs": {
+                    "content": "@outputs('HTTP_-_Call_OpenAI')?['body']",
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "choices": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "message": {
+                                "type": "object",
+                                "properties": {
+                                  "content": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "HTTP_-_Call_OpenAI": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Append_to_AllAnalyses": {
+                  "type": "AppendToArrayVariable",
+                  "inputs": {
+                    "name": "AllAnalyses",
+                    "value": "@body('Parse_JSON')?['choices'][0]?['message']?['content']"
+                  },
+                  "runAfter": {
+                    "Parse_JSON": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "runAfter": {}
+            }
+          },
+          "runAfter": {
+            "Initialize_AllAnalyses": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Get_file_properties": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "get",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/tables/@{encodeURIComponent(encodeURIComponent('9ef8d89e-44a9-4997-b58e-97fac2be77b6'))}/items/@{encodeURIComponent(triggerOutputs()?['body/ID'])}"
+          },
+          "runAfter": {
+            "For_each_result": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Move_file_to_Processed": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/files/@{encodeURIComponent(triggerOutputs()?['body/{Identifier}'])}/move",
+            "queries": {
+              "destination": "/Shared Documents/New DPA Test/DPA General/Processed/@{triggerOutputs()?['body/{FilenameWithExtension}']}"
+            }
+          },
+          "runAfter": {
+            "Get_file_properties": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Compose_all_analyses": {
+          "type": "Compose",
+          "inputs": "@join(variables('AllAnalyses'), '\\n\\n---\\n\\n')",
+          "runAfter": {
+            "Move_file_to_Processed": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Create_report_file": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/files",
+            "queries": {
+              "folderPath": "/Shared Documents/New DPA Test/DPA General/Reports",
+              "name": "DPA_Analysis_Report_@{triggerOutputs()?['body/{FilenameWithoutExtension}']}_@{formatDateTime(utcNow(), 'yyyyMMddHHmmss')}.txt"
+            },
+            "body": "@outputs('Compose_all_analyses')"
+          },
+          "runAfter": {
+            "Compose_all_analyses": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Get_report_file_metadata": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+              }
+            },
+            "method": "get",
+            "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/tables/@{encodeURIComponent(encodeURIComponent('9ef8d89e-44a9-4997-b58e-97fac2be77b6'))}/items/@{encodeURIComponent(outputs('Create_report_file')?['body/Id'])}"
+          },
+          "runAfter": {
+            "Create_report_file": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Post_completion_message_to_Teams": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['teams']['connectionId']"
+              }
+            },
+            "method": "post",
+            "path": "/v1.0/teams/@{encodeURIComponent('f664e6cd-f837-4ac7-b8d4-115b2031580a')}/channels/@{encodeURIComponent('19:xAYg4GytTIg9DcNaKB74s9W9wFH068XmERIY8gq5H9c1@thread.tacv2')}/messages",
+            "body": {
+              "messageBody": "<p><strong>⚖️ DPA Compliance Analysis Complete</strong></p><p><strong>📄 File:</strong> @{triggerOutputs()?['body/{FilenameWithExtension}']}<br><strong>👤 Uploaded by:</strong> @{triggerOutputs()?['body/Author']?['DisplayName']}<br><strong>📅 Analysis Date:</strong> @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm:ss')}</p><hr><p><strong>📊 STATUS</strong><br>✅ Analysis complete and detailed report generated</p><p><strong>📎 FULL REPORT</strong><br>Complete GDPR compliance assessment saved to:<br><strong>SharePoint &gt; DPA General &gt; Reports folder</strong></p><p><strong>File name:</strong> @{outputs('Get_report_file_metadata')?['body/Name']}</p><hr><p><em>⚡ Powered by Integritetssmart - Automated GDPR Compliance Review</em></p>"
+            }
+          },
+          "runAfter": {
+            "Get_report_file_metadata": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "runAfter": {},
+      "else": {
+        "actions": {
+          "Get_file_properties_rejected": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                }
+              },
+              "method": "get",
+              "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/tables/@{encodeURIComponent(encodeURIComponent('9ef8d89e-44a9-4997-b58e-97fac2be77b6'))}/items/@{encodeURIComponent(triggerOutputs()?['body/ID'])}"
+            },
+            "runAfter": {}
+          },
+          "Move_file_to_Rejected": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['sharepointonline']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/datasets/@{encodeURIComponent(encodeURIComponent('https://harootal.sharepoint.com/sites/ParalegalAssistant'))}/files/@{encodeURIComponent(triggerOutputs()?['body/{Identifier}'])}/move",
+              "queries": {
+                "destination": "/Shared Documents/New DPA Test/DPA General/Rejected/@{triggerOutputs()?['body/{FilenameWithExtension}']}"
+              }
+            },
+            "runAfter": {
+              "Get_file_properties_rejected": [
+                "Succeeded"
+              ]
+            }
+          },
+          "Post_rejection_message_to_Teams": {
+            "type": "ApiConnection",
+            "inputs": {
+              "host": {
+                "connection": {
+                  "name": "@parameters('$connections')['teams']['connectionId']"
+                }
+              },
+              "method": "post",
+              "path": "/v1.0/teams/@{encodeURIComponent('f664e6cd-f837-4ac7-b8d4-115b2031580a')}/channels/@{encodeURIComponent('19:xAYg4GytTIg9DcNaKB74s9W9wFH068XmERIY8gq5H9c1@thread.tacv2')}/messages",
+              "body": {
+                "messageBody": "<p><strong>❌ File Rejected - Not a PDF</strong></p><p><strong>📄 File:</strong> @{triggerOutputs()?['body/{FilenameWithExtension}']}<br><strong>👤 Uploaded by:</strong> @{triggerOutputs()?['body/Author']?['DisplayName']}<br><strong>📅 Date:</strong> @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm:ss')}</p><hr><p><strong>⚠️ REASON</strong><br>Only PDF files are accepted for DPA compliance analysis.</p><p>The file has been moved to the <strong>Rejected</strong> folder.</p><p>Please upload a PDF version of your DPA document.</p><hr><p><em>⚡ Powered by Integritetssmart - Automated GDPR Compliance Review</em></p>"
+              }
+            },
+            "runAfter": {
+              "Move_file_to_Rejected": [
+                "Succeeded"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}
