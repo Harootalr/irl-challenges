@@ -1,8 +1,8 @@
-import { 
-  users, venues, challenges, challengeParticipants, messages, results, reviews, reports, promotions,
-  type User, type InsertUser, type Venue, type InsertVenue, 
+import {
+  users, venues, challenges, challengeParticipants, messages, reviews, reports, promotions,
+  type User, type InsertUser, type Venue, type InsertVenue,
   type Challenge, type InsertChallenge, type ChallengeParticipant, type InsertChallengeParticipant,
-  type Message, type InsertMessage, type Result, type InsertResult,
+  type Message, type InsertMessage,
   type Review, type InsertReview, type Report, type InsertReport,
   type Promotion, type InsertPromotion
 } from "@shared/schema";
@@ -49,10 +49,6 @@ export interface IStorage {
   getMessagesWithUsers(challengeId: string): Promise<any[]>;
   createMessage(message: InsertMessage): Promise<Message>;
 
-  // Result operations
-  getResults(challengeId: string): Promise<Result[]>;
-  createResult(result: InsertResult): Promise<Result>;
-  updateResult(id: string, updates: Partial<Result>): Promise<Result>;
 
   // Review operations
   getReviews(challengeId?: string, revieweeId?: string): Promise<Review[]>;
@@ -138,12 +134,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getVenuesNear(lat: number, lng: number, radiusKm: number): Promise<Venue[]> {
-    // Simple distance calculation - in production, use PostGIS or similar
+    // Optimized bounding box calculation for initial location filtering without PostGIS
+    const latDelta = radiusKm / 111.32;
+    const lngDelta = radiusKm / (111.32 * Math.cos(lat * (Math.PI / 180)));
+
     return await db.select().from(venues)
       .where(and(
         eq(venues.verified, true),
-        sql`ABS(CAST(${venues.lat} AS DECIMAL) - ${lat}) < ${radiusKm / 111.0}`,
-        sql`ABS(CAST(${venues.lng} AS DECIMAL) - ${lng}) < ${radiusKm / (111.0 * Math.cos(lat * Math.PI / 180))}`
+        sql`CAST(${venues.lat} AS DECIMAL) BETWEEN ${lat - latDelta} AND ${lat + latDelta}`,
+        sql`CAST(${venues.lng} AS DECIMAL) BETWEEN ${lng - lngDelta} AND ${lng + lngDelta}`
       ))
       .orderBy(asc(venues.name));
   }
@@ -208,16 +207,16 @@ export class DatabaseStorage implements IStorage {
         AND ${challengeParticipants.state} = 'approved'
       )`
     })
-    .from(challenges)
-    .leftJoin(users, eq(challenges.hostId, users.id))
-    .leftJoin(venues, eq(challenges.venueId, venues.id))
-    .where(and(...conditions))
-    .orderBy(desc(challenges.startAt));
+      .from(challenges)
+      .leftJoin(users, eq(challenges.hostId, users.id))
+      .leftJoin(venues, eq(challenges.venueId, venues.id))
+      .where(and(...conditions))
+      .orderBy(desc(challenges.startAt));
   }
 
   async createChallenge(challenge: InsertChallenge): Promise<Challenge> {
     const [newChallenge] = await db.insert(challenges).values(challenge).returning();
-    
+
     // Automatically add host as participant
     await db.insert(challengeParticipants).values({
       challengeId: newChallenge.id,
@@ -243,19 +242,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async reportResult(challengeId: string, userId: string, reportedOutcome: string): Promise<Challenge> {
-    const validOutcomes = new Set(['host_won','opponent_won','draw','cancelled']);
+    const validOutcomes = new Set(['host_won', 'opponent_won', 'draw', 'cancelled']);
 
     if (!validOutcomes.has(reportedOutcome)) {
       throw new Error("Invalid outcome");
     }
-    
+
     const challenge = await this.getChallenge(challengeId);
     if (!challenge) {
       throw new Error("Challenge not found");
     }
 
     // Block edits after finalization
-    if (['completed','cancelled'].includes(challenge.status)) {
+    if (['completed', 'cancelled'].includes(challenge.status)) {
       throw new Error("Challenge already finalized");
     }
 
@@ -275,7 +274,7 @@ export class DatabaseStorage implements IStorage {
       return challenge;
     }
 
-    const updates: Partial<Challenge> = { 
+    const updates: Partial<Challenge> = {
       [updateField]: reportedOutcome,
       updatedAt: new Date()
     };
@@ -290,7 +289,7 @@ export class DatabaseStorage implements IStorage {
         updates.status = 'disputed';
       }
     } else {
-      if (['open','full'].includes(challenge.status)) {
+      if (['open', 'full'].includes(challenge.status)) {
         updates.status = 'in_progress';
       }
     }
@@ -302,16 +301,16 @@ export class DatabaseStorage implements IStorage {
       if (!fresh) {
         throw new Error("Challenge not found");
       }
-      if (['completed','cancelled'].includes(fresh.status)) {
+      if (['completed', 'cancelled'].includes(fresh.status)) {
         throw new Error("Challenge already finalized");
       }
-      
+
       const [updated] = await tx
         .update(challenges)
         .set(updates)
         .where(eq(challenges.id, challengeId))
         .returning();
-      
+
       return updated;
     });
   }
@@ -326,10 +325,10 @@ export class DatabaseStorage implements IStorage {
       participant: challengeParticipants,
       user: users
     })
-    .from(challengeParticipants)
-    .leftJoin(users, eq(challengeParticipants.userId, users.id))
-    .where(eq(challengeParticipants.challengeId, challengeId))
-    .orderBy(desc(challengeParticipants.createdAt));
+      .from(challengeParticipants)
+      .leftJoin(users, eq(challengeParticipants.userId, users.id))
+      .where(eq(challengeParticipants.challengeId, challengeId))
+      .orderBy(desc(challengeParticipants.createdAt));
   }
 
   async addParticipant(participant: InsertChallengeParticipant): Promise<ChallengeParticipant> {
@@ -368,10 +367,10 @@ export class DatabaseStorage implements IStorage {
       message: messages,
       sender: users
     })
-    .from(messages)
-    .leftJoin(users, eq(messages.senderId, users.id))
-    .where(eq(messages.challengeId, challengeId))
-    .orderBy(asc(messages.createdAt));
+      .from(messages)
+      .leftJoin(users, eq(messages.senderId, users.id))
+      .where(eq(messages.challengeId, challengeId))
+      .orderBy(asc(messages.createdAt));
   }
 
   async createMessage(message: InsertMessage): Promise<Message> {
@@ -379,25 +378,6 @@ export class DatabaseStorage implements IStorage {
     return newMessage;
   }
 
-  async getResults(challengeId: string): Promise<Result[]> {
-    return await db.select().from(results)
-      .where(eq(results.challengeId, challengeId))
-      .orderBy(desc(results.createdAt));
-  }
-
-  async createResult(result: InsertResult): Promise<Result> {
-    const [newResult] = await db.insert(results).values(result).returning();
-    return newResult;
-  }
-
-  async updateResult(id: string, updates: Partial<Result>): Promise<Result> {
-    const [result] = await db
-      .update(results)
-      .set(updates)
-      .where(eq(results.id, id))
-      .returning();
-    return result;
-  }
 
   async getReviews(challengeId?: string, revieweeId?: string): Promise<Review[]> {
     const conditions = [];
@@ -435,13 +415,13 @@ export class DatabaseStorage implements IStorage {
     const newUsersThisMonth = await db.select({ count: sql<number>`count(*)` })
       .from(users)
       .where(sql`${users.createdAt} >= date_trunc('month', current_date)`);
-    
+
     // Get venue analytics
     const totalVenues = await db.select({ count: sql<number>`count(*)` }).from(venues);
     const verifiedVenues = await db.select({ count: sql<number>`count(*)` })
       .from(venues)
       .where(eq(venues.verified, true));
-    
+
     // Get challenge analytics
     const totalChallenges = await db.select({ count: sql<number>`count(*)` }).from(challenges);
     const activeChallenges = await db.select({ count: sql<number>`count(*)` })
@@ -450,26 +430,26 @@ export class DatabaseStorage implements IStorage {
     const completedChallenges = await db.select({ count: sql<number>`count(*)` })
       .from(challenges)
       .where(eq(challenges.status, 'completed'));
-    
+
     // Get popular games
     const popularGames = await db.select({
       preset: challenges.preset,
       count: sql<number>`count(*)`
     })
-    .from(challenges)
-    .groupBy(challenges.preset)
-    .orderBy(sql`count(*) desc`)
-    .limit(5);
+      .from(challenges)
+      .groupBy(challenges.preset)
+      .orderBy(sql`count(*) desc`)
+      .limit(5);
 
     // Get activity over time (last 30 days)
     const dailyActivity = await db.select({
       date: sql<string>`date(${challenges.createdAt})`,
       challenges: sql<number>`count(*)`
     })
-    .from(challenges)
-    .where(sql`${challenges.createdAt} >= current_date - interval '30 days'`)
-    .groupBy(sql`date(${challenges.createdAt})`)
-    .orderBy(sql`date(${challenges.createdAt})`);
+      .from(challenges)
+      .where(sql`${challenges.createdAt} >= current_date - interval '30 days'`)
+      .groupBy(sql`date(${challenges.createdAt})`)
+      .orderBy(sql`date(${challenges.createdAt})`);
 
     return {
       users: {
@@ -507,11 +487,11 @@ export class DatabaseStorage implements IStorage {
 
   convertToCSV(data: any[], type: string): string {
     if (!data.length) return '';
-    
+
     const headers = Object.keys(data[0]);
     const csvContent = [
       headers.join(','),
-      ...data.map(row => 
+      ...data.map(row =>
         headers.map(header => {
           const value = row[header];
           if (typeof value === 'string' && value.includes(',')) {
@@ -521,7 +501,7 @@ export class DatabaseStorage implements IStorage {
         }).join(',')
       )
     ].join('\n');
-    
+
     return csvContent;
   }
 
@@ -573,7 +553,7 @@ export class DatabaseStorage implements IStorage {
         ratingCount: 234,
         openingHours: {
           monday: "15:00-01:00",
-          tuesday: "15:00-01:00", 
+          tuesday: "15:00-01:00",
           wednesday: "15:00-01:00",
           thursday: "15:00-02:00",
           friday: "15:00-03:00",

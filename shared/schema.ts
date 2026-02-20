@@ -4,8 +4,8 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Valid status and outcome values (enforced in application logic)
-export const CHALLENGE_STATUSES = ['open','full','in_progress','completed','cancelled','disputed'] as const;
-export const CHALLENGE_OUTCOMES = ['host_won','opponent_won','draw','cancelled'] as const;
+export const CHALLENGE_STATUSES = ['open', 'full', 'in_progress', 'completed', 'cancelled', 'disputed'] as const;
+export const CHALLENGE_OUTCOMES = ['host_won', 'opponent_won', 'draw', 'cancelled'] as const;
 
 export type ChallengeStatus = typeof CHALLENGE_STATUSES[number];
 export type ChallengeOutcome = typeof CHALLENGE_OUTCOMES[number];
@@ -25,7 +25,9 @@ export const users = pgTable("users", {
   role: text("role").default('user'), // user, venue_admin, super_admin
   isVerified: boolean("is_verified").default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  idx_users_email: index("idx_users_email").on(t.email)
+}));
 
 export const venues = pgTable("venues", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -42,7 +44,9 @@ export const venues = pgTable("venues", {
   rating: decimal("rating", { precision: 3, scale: 2 }).default('0.00'),
   ratingCount: integer("rating_count").default(0),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  idx_venues_city: index("idx_venues_city").on(t.city)
+}));
 
 export const challenges = pgTable("challenges", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -65,7 +69,8 @@ export const challenges = pgTable("challenges", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (t) => ({
   idx_status_start: index().on(t.status, t.startAt),
-  idx_venue_start: index().on(t.venueId, t.startAt)
+  idx_venue_start: index().on(t.venueId, t.startAt),
+  idx_challenges_hostId: index("idx_challenges_host_id").on(t.hostId)
 }));
 
 export const challengeParticipants = pgTable("challenge_participants", {
@@ -76,7 +81,9 @@ export const challengeParticipants = pgTable("challenge_participants", {
   state: text("state").default('pending'), // pending, approved, rejected, checked_in
   checkinAt: timestamp("checkin_at"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  idx_participants_userId: index("idx_participants_user_id").on(t.userId)
+}));
 
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -84,18 +91,10 @@ export const messages = pgTable("messages", {
   senderId: uuid("sender_id").notNull().references(() => users.id),
   body: text("body").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  idx_messages_challengeId: index("idx_messages_challenge_id").on(t.challengeId)
+}));
 
-export const results = pgTable("results", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  challengeId: uuid("challenge_id").notNull().references(() => challenges.id),
-  scores: jsonb("scores_json").notNull(),
-  winnerUserId: uuid("winner_user_id").references(() => users.id),
-  reportedByUserId: uuid("reported_by_user_id").notNull().references(() => users.id),
-  confirmationState: text("confirmation_state").default('pending'), // pending, confirmed, disputed
-  confirmations: jsonb("confirmations").default('[]'),
-  createdAt: timestamp("created_at").defaultNow(),
-});
 
 export const reviews = pgTable("reviews", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -158,7 +157,6 @@ export const challengesRelations = relations(challenges, ({ one, many }) => ({
   }),
   participants: many(challengeParticipants),
   messages: many(messages),
-  results: many(results),
   reviews: many(reviews),
   reports: many(reports),
 }));
@@ -185,20 +183,6 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   }),
 }));
 
-export const resultsRelations = relations(results, ({ one }) => ({
-  challenge: one(challenges, {
-    fields: [results.challengeId],
-    references: [challenges.id],
-  }),
-  winner: one(users, {
-    fields: [results.winnerUserId],
-    references: [users.id],
-  }),
-  reportedBy: one(users, {
-    fields: [results.reportedByUserId],
-    references: [users.id],
-  }),
-}));
 
 export const reviewsRelations = relations(reviews, ({ one }) => ({
   reviewer: one(users, {
@@ -281,12 +265,6 @@ export const insertMessageSchema = createInsertSchema(messages).omit({
   createdAt: true,
 });
 
-export const insertResultSchema = createInsertSchema(results).omit({
-  id: true,
-  confirmationState: true,
-  confirmations: true,
-  createdAt: true,
-});
 
 export const insertReviewSchema = createInsertSchema(reviews).omit({
   id: true,
@@ -322,8 +300,6 @@ export type InsertChallengeParticipant = z.infer<typeof insertChallengeParticipa
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 
-export type Result = typeof results.$inferSelect;
-export type InsertResult = z.infer<typeof insertResultSchema>;
 
 export type Review = typeof reviews.$inferSelect;
 export type InsertReview = z.infer<typeof insertReviewSchema>;
