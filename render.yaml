@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: irl-challenges
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        sync: false   # You will enter this in the Render dashboard
+      - key: JWT_SECRET
+        generateValue: true   # Render auto-generates a secure random value
+      - key: ALLOWED_ORIGIN
+        sync: false   # Enter your Render service URL after first deploy
+      - key: ALLOWED_ORIGINS
+        sync: false   # Same as ALLOWED_ORIGIN

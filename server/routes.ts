@@ -10,7 +10,7 @@ declare module "express-session" {
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertUserSchema, insertChallengeSchema, insertMessageSchema, insertResultSchema, insertReviewSchema, insertReportSchema, GAME_PRESETS } from "@shared/schema";
+import { insertUserSchema, insertChallengeSchema, insertMessageSchema, insertReviewSchema, insertReportSchema, GAME_PRESETS } from "@shared/schema";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import session from "express-session";
@@ -21,9 +21,10 @@ import cors from "cors";
 import { parse as parseUrl } from "url";
 import { parse as parseCookie } from "cookie";
 import { unsign } from "cookie-signature";
-import { healthCheck } from "./routes/health";
+
 import { requestIdMiddleware, requestLoggingMiddleware } from "./middleware/logging";
 import { log } from "./utils/logger";
+import { pool } from "./db";
 
 const PgSession = connectPgSimple(session);
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -51,26 +52,26 @@ const WEBSOCKET_MESSAGE_LIMIT = 60; // Max 60 messages per user per minute
 const checkRateLimit = (limiterMap: Map<string, { count: number, lastReset: number }>, key: string, limit: number): boolean => {
   const now = Date.now();
   const windowMs = 60 * 1000; // 1 minute window
-  
+
   if (!limiterMap.has(key)) {
     limiterMap.set(key, { count: 1, lastReset: now });
     return true;
   }
-  
+
   const entry = limiterMap.get(key)!;
-  
+
   // Reset if window has passed
   if (now - entry.lastReset > windowMs) {
     entry.count = 1;
     entry.lastReset = now;
     return true;
   }
-  
+
   // Check if under limit
   if (entry.count >= limit) {
     return false;
   }
-  
+
   entry.count++;
   return true;
 };
@@ -79,11 +80,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Request ID and logging middleware
   app.use(requestIdMiddleware);
   app.use(requestLoggingMiddleware);
-  
+
   // CORS configuration - Restrict origins in production
   const isProduction = process.env.NODE_ENV === 'production';
   app.use(cors({
-    origin: isProduction 
+    origin: isProduction
       ? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : false)
       : true, // Allow all origins in development
     credentials: true, // Allow cookies and auth headers
@@ -91,7 +92,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     optionsSuccessStatus: 200 // For legacy browser support
   }));
-  
+
   // Security middleware - Strict CSP for production
   app.use(helmet({
     contentSecurityPolicy: isProduction ? {
@@ -157,25 +158,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       version: "1.0.0"
     });
   });
-  
-  // Comprehensive health check with database
-  app.get("/healthz", healthCheck);
+
+
 
   // Session middleware - Use PostgreSQL for persistent sessions
   const DATABASE_URL = process.env.DATABASE_URL;
   if (!DATABASE_URL) {
     throw new Error("DATABASE_URL environment variable is required");
   }
-  
+
   // Create session store instance for both Express and WebSocket use
   sessionStore = new PgSession({
-    conString: DATABASE_URL,
+    pool: pool as any, // Use shared pool so Supabase SSL config is inherited
     tableName: 'session', // Table name for sessions
     createTableIfMissing: true, // Automatically create session table if it doesn't exist
     pruneSessionInterval: 60 * 60 * 24 * 7, // Prune expired sessions weekly (in seconds)
     errorLog: (msg: string) => log.error('Session store error', { message: msg }) // Structured logging for database errors
   });
-  
+
   app.use(session({
     store: sessionStore,
     secret: JWT_SECRET as string,
@@ -206,7 +206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/register", async (req, res) => {
     try {
       const userData = insertUserSchema.parse(req.body);
-      
+
       // Check if user already exists
       const existingUser = await storage.getUserByEmail(userData.email);
       if (existingUser) {
@@ -215,7 +215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const user = await storage.createUser(userData);
       req.session.userId = user.id;
-      
+
       res.json({ user: { ...user, password: undefined } });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -225,7 +225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password, rememberMe } = req.body;
-      
+
       const user = await storage.getUserByEmail(email);
       if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
@@ -237,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       req.session.userId = user.id;
-      
+
       // Set session duration based on rememberMe option
       if (rememberMe) {
         // 30 days for remember me
@@ -246,8 +246,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 24 hours for regular login
         req.session.cookie.maxAge = 24 * 60 * 60 * 1000;
       }
-      
-      res.json({ 
+
+      res.json({
         user: { ...user, password: undefined },
         rememberMe: rememberMe || false
       });
@@ -281,7 +281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/users/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       // Ensure user can only update their own profile
       if (id !== req.session.userId) {
         return res.status(403).json({ message: "Access denied" });
@@ -328,7 +328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { currentPassword, newPassword } = req.body;
-      
+
       // Ensure user can only change their own password
       if (id !== req.session.userId) {
         return res.status(403).json({ message: "Access denied" });
@@ -356,10 +356,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Hash new password
       const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-      
+
       // Update password
       await storage.updateUser(id, { password: hashedNewPassword });
-      
+
       res.json({ message: "Password updated successfully" });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -409,7 +409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/challenges", async (req, res) => {
     try {
       const { status, venueId, hostId, city, detailed } = req.query;
-      
+
       const filters = {
         status: status as string,
         venueId: venueId as string,
@@ -448,7 +448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         hostId: req.session.userId
       });
-      
+
       const challenge = await storage.createChallenge(challengeData);
       res.json(challenge);
     } catch (error: any) {
@@ -502,7 +502,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if user is already a participant
       const existingParticipants = await storage.getChallengeParticipants(challengeId);
       const isAlreadyParticipant = existingParticipants.some(p => p.userId === userId);
-      
+
       if (isAlreadyParticipant) {
         return res.status(400).json({ message: "Already a participant" });
       }
@@ -557,7 +557,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verify user is an approved participant
       const participants = await storage.getChallengeParticipants(challengeId);
       const participant = participants.find(p => p.userId === userId && p.state === 'approved');
-      
+
       if (!participant) {
         return res.status(403).json({ message: "Not an approved participant" });
       }
@@ -575,7 +575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const venueLat = parseFloat(venue.lat);
         const venueLng = parseFloat(venue.lng);
         const distance = calculateDistance(lat, lng, venueLat, venueLng);
-        
+
         if (distance > 0.1) { // 100 meters
           return res.status(400).json({ message: "You must be within 100m of the venue to check in" });
         }
@@ -610,30 +610,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Results
-  app.get("/api/challenges/:id/results", async (req, res) => {
-    try {
-      const results = await storage.getResults(req.params.id);
-      res.json(results);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/challenges/:id/results", requireAuth, async (req, res) => {
-    try {
-      const resultData = insertResultSchema.parse({
-        ...req.body,
-        challengeId: req.params.id,
-        reportedByUserId: req.session.userId
-      });
-
-      const result = await storage.createResult(resultData);
-      res.json(result);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
 
   // Reviews
   app.post("/api/reviews", requireAuth, async (req, res) => {
@@ -844,7 +820,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { type, format } = req.query;
       const exportData = await storage.getExportData(type as string);
-      
+
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', `attachment; filename="${type}-export.csv"`);
@@ -880,11 +856,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/report-result", requireAuth, async (req, res) => {
     try {
       const { challenge_id, user_id, reported_outcome } = req.body ?? {};
-      
+
       if (!challenge_id || !user_id || !reported_outcome) {
         return res.status(400).json({ message: "Missing required fields: challenge_id, user_id, reported_outcome" });
       }
-      
+
       // Enforce authorization - users can only report for themselves unless admin
       if (req.session.userId !== user_id) {
         const requestingUser = await storage.getUser(req.session.userId!);
@@ -896,19 +872,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate outcome values
       const validOutcomes = ['host_won', 'opponent_won', 'draw', 'cancelled'];
       if (!validOutcomes.includes(reported_outcome)) {
-        return res.status(400).json({ 
-          message: "Invalid outcome. Must be: host_won, opponent_won, draw, or cancelled" 
+        return res.status(400).json({
+          message: "Invalid outcome. Must be: host_won, opponent_won, draw, or cancelled"
         });
       }
 
       const updated = await storage.reportResult(challenge_id, user_id, reported_outcome);
-      
-      return res.json({ 
-        success: true, 
-        challenge: updated, 
-        message: getResultMessage(updated) 
+
+      return res.json({
+        success: true,
+        challenge: updated,
+        message: getResultMessage(updated)
       });
-      
+
     } catch (error: any) {
       log.error('Report result error', { err: error as Error, requestId: req.requestId });
       const msg = String(error.message || error);
@@ -938,6 +914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'http://localhost:5000',
           'https://localhost:5000',
           process.env.ALLOWED_ORIGIN, // Allow environment-specific origin
+          process.env.RENDER_EXTERNAL_URL, // Render sets this automatically
         ].filter(Boolean);
 
         if (origin && !allowedOrigins.includes(origin)) {
@@ -952,7 +929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const parsedCookies = parseCookie(cookies);
         const sessionCookie = parsedCookies['connect.sid']; // Default express-session cookie name
-        
+
         if (!sessionCookie) {
           return resolve(null);
         }
@@ -964,12 +941,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Use cookie-signature library to properly unsign the cookie
             // JWT_SECRET is guaranteed to be non-null due to check at file top
             const unsignedSessionId = unsign(sessionCookie.slice(2), JWT_SECRET!);
-            
+
             if (unsignedSessionId === false) {
               log.warn('WebSocket connection rejected: Invalid session signature', { ip: req.socket.remoteAddress });
               return resolve(null);
             }
-            
+
             sessionId = unsignedSessionId as string;
           } else {
             // Unsigned cookie (should not happen in production)
@@ -979,7 +956,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           log.error('Session cookie verification failed', { err: error as Error, ip: req.socket.remoteAddress });
           return resolve(null);
         }
-        
+
         // Get session from store
         sessionStore.get(sessionId, (err: any, sessionData: any) => {
           if (err || !sessionData || !sessionData.userId) {
@@ -1000,7 +977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   wss.on('connection', async (ws: WebSocket, req) => {
     // Get client IP for rate limiting
     const clientIP = req.socket.remoteAddress || 'unknown';
-    
+
     // Check connection rate limit
     if (!checkRateLimit(connectionCounts, clientIP, WEBSOCKET_CONNECTION_LIMIT)) {
       ws.close(1008, 'Too many connections from this IP');
@@ -1009,63 +986,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Authenticate the WebSocket connection
     const userId = await authenticateWebSocket(req);
-    
+
     if (!userId) {
       ws.close(1008, 'Authentication required');
       return;
     }
-    
+
     // TypeScript assertion: userId is guaranteed to be non-null after the above check
     const authenticatedUserId: string = userId;
-    
+
     ws.on('message', async (data) => {
       try {
         // Check message rate limit
         if (!checkRateLimit(messageCounts, authenticatedUserId, WEBSOCKET_MESSAGE_LIMIT)) {
-          ws.send(JSON.stringify({ 
-            type: 'error', 
-            message: 'Message rate limit exceeded. Please slow down.' 
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Message rate limit exceeded. Please slow down.'
           }));
           return;
         }
 
         const message = JSON.parse(data.toString());
-        
+
         if (message.type === 'join_challenge') {
           const challengeId = message.challengeId;
-          
+
           if (!challengeId || typeof challengeId !== 'string') {
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Invalid challenge ID' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid challenge ID'
             }));
             return;
           }
-          
+
           // Verify user is participant in the challenge with proper state validation
           try {
             const challenge = await storage.getChallenge(challengeId);
             if (!challenge) {
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                message: 'Challenge not found' 
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Challenge not found'
               }));
               return;
             }
-            
+
             // Get participants with detailed state information
             const participants = await storage.getChallengeParticipants(challengeId);
             const isHost = challenge.hostId === authenticatedUserId;
             const participantRecord = participants.find(p => p.userId === authenticatedUserId);
-            
+
             // Enhanced authorization - check participant state
-            const isAuthorizedParticipant = isHost || 
+            const isAuthorizedParticipant = isHost ||
               (participantRecord && ['approved', 'checked_in'].includes(participantRecord.state as string));
-            
+
             if (!isAuthorizedParticipant) {
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                message: 'You are not an authorized participant in this challenge' 
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'You are not an authorized participant in this challenge'
               }));
               return;
             }
@@ -1078,58 +1055,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 existingConnection.ws.close(1000, 'New connection established');
               }
             }
-            
+
             // Add to challenge connections
             if (!challengeConnections.has(challengeId)) {
               challengeConnections.set(challengeId, new Set());
             }
             challengeConnections.get(challengeId)!.add(ws);
-            
+
             // Track user connection
             userChallengeConnections.set(authenticatedUserId, { challengeId, ws });
-            
-            ws.send(JSON.stringify({ 
-              type: 'joined', 
+
+            ws.send(JSON.stringify({
+              type: 'joined',
               challengeId,
               role: isHost ? 'host' : 'participant'
             }));
           } catch (error) {
             log.error('Challenge verification error', { err: error as Error, userId: authenticatedUserId, challengeId });
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Challenge verification failed' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Challenge verification failed'
             }));
             return;
           }
         }
-        
+
         if (message.type === 'send_message') {
           const { challengeId, body } = message;
-          
+
           // Validate message content
           if (!challengeId || !body || typeof body !== 'string') {
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Invalid message format' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid message format'
             }));
             return;
           }
 
           // Limit message length
           if (body.length > 1000) {
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Message too long (max 1000 characters)' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Message too long (max 1000 characters)'
             }));
             return;
           }
-          
+
           // Validate that user is connected to this challenge
           const userConnection = userChallengeConnections.get(authenticatedUserId);
           if (!userConnection || userConnection.challengeId !== challengeId) {
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'You are not connected to this challenge' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'You are not connected to this challenge'
             }));
             return;
           }
@@ -1138,9 +1115,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             const challenge = await storage.getChallenge(challengeId);
             if (!challenge) {
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                message: 'Challenge not found' 
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Challenge not found'
               }));
               return;
             }
@@ -1148,13 +1125,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const participants = await storage.getChallengeParticipants(challengeId);
             const isHost = challenge.hostId === authenticatedUserId;
             const participantRecord = participants.find(p => p.userId === authenticatedUserId);
-            const isAuthorizedParticipant = isHost || 
+            const isAuthorizedParticipant = isHost ||
               (participantRecord && ['approved', 'checked_in'].includes(participantRecord.state as string));
-            
+
             if (!isAuthorizedParticipant) {
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                message: 'Not authorized to send messages in this challenge' 
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Not authorized to send messages in this challenge'
               }));
               return;
             }
@@ -1165,7 +1142,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               senderId: authenticatedUserId,
               body: body.trim() // Sanitize message content
             });
-            
+
             // Broadcast to all clients in the challenge room
             const connections = challengeConnections.get(challengeId);
             if (connections) {
@@ -1173,12 +1150,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const messageWithSender = {
                 type: 'new_message',
                 message: newMessage,
-                sender: { 
-                  ...sender, 
+                sender: {
+                  ...sender,
                   password: undefined // Never send password data
                 }
               };
-              
+
               connections.forEach(client => {
                 if (client.readyState === WebSocket.OPEN) {
                   client.send(JSON.stringify(messageWithSender));
@@ -1187,30 +1164,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           } catch (error) {
             log.error('Message send error', { err: error as Error, userId: authenticatedUserId, challengeId });
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Failed to send message' 
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Failed to send message'
             }));
           }
         }
       } catch (error) {
         log.error('WebSocket message error', { err: error as Error, userId: authenticatedUserId });
-        ws.send(JSON.stringify({ 
-          type: 'error', 
-          message: 'Invalid message format' 
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Invalid message format'
         }));
       }
     });
 
     ws.on('close', (code, reason) => {
       log.websocket('WebSocket connection closed', { userId: authenticatedUserId, code, reason });
-      
+
       // Remove user from connection tracking
       const userConnection = userChallengeConnections.get(authenticatedUserId);
       if (userConnection && userConnection.ws === ws) {
         userChallengeConnections.delete(authenticatedUserId);
       }
-      
+
       // Remove connection from all challenge rooms
       challengeConnections.forEach((connections, challengeId) => {
         if (connections.has(ws)) {
@@ -1225,13 +1202,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     ws.on('error', (error) => {
       log.error('WebSocket connection error', { err: error, userId: authenticatedUserId });
-      
+
       // Clean up connections on error
       const userConnection = userChallengeConnections.get(authenticatedUserId);
       if (userConnection && userConnection.ws === ws) {
         userChallengeConnections.delete(authenticatedUserId);
       }
-      
+
       challengeConnections.forEach((connections, challengeId) => {
         if (connections.has(ws)) {
           connections.delete(ws);
@@ -1240,7 +1217,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       });
-      
+
       // Close connection gracefully
       if (ws.readyState === WebSocket.OPEN) {
         ws.close(1011, 'Server error');
@@ -1270,10 +1247,10 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   const R = 6371; // Radius of the Earth in kilometers
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c; // Distance in kilometers
   return distance;
 }
